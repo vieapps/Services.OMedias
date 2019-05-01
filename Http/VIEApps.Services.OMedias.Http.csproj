@@ -1,0 +1,27 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<TargetFramework>netstandard2.0</TargetFramework>
+		<RootNamespace>net.vieapps.Services.Books</RootNamespace>
+		<AssemblyName>VIEApps.Services.Books.Http</AssemblyName>
+		<WarningLevel>3</WarningLevel>
+		<AssemblyTitle>VIEApps NGX Books</AssemblyTitle>
+		<Authors>VIEApps.net</Authors>
+		<Company>VIEApps.net</Company>
+		<Product>VIEApps NGX</Product>
+		<Copyright>© 2018 VIEApps.net</Copyright>
+		<AssemblyVersion>10.2.1812.3</AssemblyVersion>
+		<FileVersion>10.2.1812.3</FileVersion>
+		<InformationalVersion>v10.2.netstandard-2+rev:2018.12.06-latest.components</InformationalVersion>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<None Remove=".DS_Store" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="..\..\Base.Http\VIEApps.Services.Base.Http.csproj" />
+		<ProjectReference Include="..\Service\VIEApps.Services.OMedias.csproj" />
+	</ItemGroup>
+
+</Project>
