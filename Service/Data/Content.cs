@@ -26,6 +26,7 @@ namespace net.vieapps.Services.OMedias
 	{
 		public Content() : base() { }
 
+		#region Properties
 		[Property(MaxLength = 250, NotEmpty = true), Sortable, Searchable, FormControl(AutoFocus = true, Label = "{{omedias.controls.[name].label}}")]
 		public override string Title { get; set; } = "";
 
@@ -35,8 +36,8 @@ namespace net.vieapps.Services.OMedias
 		[Property(MaxLength = 250), Sortable(IndexName = "Info"), Searchable, FormControl(Label = "{{omedias.controls.[name].label}}")]
 		public string Speakers { get; set; } = "";
 
-		[Property(MaxLength = 2000), FormControl(DataType = "url", Label = "{{omedias.controls.[name].label}}", Description = "{{omedias.controls.[name].description}}")]
-		public string MediaURI { get; set; } = "";
+		[Property(IsCLOB = true), FormControl(Label = "{{omedias.controls.[name].label}}", Excluded = true)]
+		public string Details { get; set; }
 
 		[Property(MaxLength = 250, NotEmpty = true), Sortable(IndexName = "Categories"), FormControl(ControlType = "Select", SelectValuesRemoteURI = "discovery/definitions?x-service-name=omedias&x-object-name=categories", SelectAsBoxes = true, Multiple = true, Label = "{{omedias.controls.[name].label}}")]
 		public string Categories { get; set; } = "";
@@ -53,8 +54,8 @@ namespace net.vieapps.Services.OMedias
 		[JsonConverter(typeof(StringEnumConverter)), BsonRepresentation(BsonType.String), Sortable(IndexName = "Statistics"), FormControl(Label = "{{omedias.controls.[name].label}}", Description = "{{omedias.controls.[name].description}}")]
 		public ApprovalStatus Status { get; set; } = ApprovalStatus.Draft;
 
-		[Property(IsCLOB = true), FormControl(Label = "{{omedias.controls.[name].label}}", Excluded = true)]
-		public string Details { get; set; }
+		[Property(MaxLength = 2000), FormControl(DataType = "url", Label = "{{omedias.controls.[name].label}}", Description = "{{omedias.controls.[name].description}}")]
+		public string MediaURI { get; set; } = "";
 
 		[Property(MaxLength = 32, NotEmpty = false, NotNull = false), Sortable(IndexName = "Management"), FormControl(Hidden = true)]
 		public string ParentID { get; set; }
@@ -84,9 +85,6 @@ namespace net.vieapps.Services.OMedias
 			}
 		}
 
-		[Ignore, BsonIgnore, FormControl(Excluded = true)]
-		public List<string> Images { get; set; } = new List<string>();
-
 		[AsJson, FormControl(Excluded = true)]
 		public List<CounterInfo> Counters { get; set; } = new List<CounterInfo>
 		{
@@ -105,9 +103,16 @@ namespace net.vieapps.Services.OMedias
 
 		[Property(MaxLength = 32), Sortable(IndexName = "Management"), FormControl(Excluded = true)]
 		public string LastModifiedID { get; set; } = "";
+		#endregion
 
 		#region To JSON
-		public JObject ToJson(bool addTypeOfExtendedProperties = false, Action<JObject> onPreCompleted = null, bool asNormalized = true)
+		public JObject ToJson(JToken files, Action<JObject> onPreCompleted = null)
+			=> this.ToJson(false, onPreCompleted, true, files);
+
+		public override JObject ToJson(bool addTypeOfExtendedProperties, Action<JObject> onPreCompleted)
+			=> this.ToJson(addTypeOfExtendedProperties, onPreCompleted, true);
+
+		public JObject ToJson(bool addTypeOfExtendedProperties = false, Action<JObject> onPreCompleted = null, bool asNormalized = true, JToken files = null)
 			=> base.ToJson(addTypeOfExtendedProperties, json =>
 			{
 				if (asNormalized)
@@ -116,30 +121,24 @@ namespace net.vieapps.Services.OMedias
 					if (download != null)
 					{
 						var gotUpdated = false;
-
 						if (!download.LastUpdated.IsInCurrentMonth() && download.Total == download.Month)
 						{
 							download.Month = 0;
 							gotUpdated = true;
 						}
-
 						if (!download.LastUpdated.IsInCurrentWeek() && download.Total == download.Week)
 						{
 							download.Week = 0;
 							gotUpdated = true;
 						}
-
 						if (gotUpdated)
 							json["Counters"] = this.Counters.ToJArray();
 					}
-
 					json["EndingTime"] = this.EndingTime.Equals("-") ? null : DateTime.Parse(this.EndingTime).ToIsoString();
+					json.UpdateFiles(files);
 				}
 				onPreCompleted?.Invoke(json);
 			});
-
-		public override JObject ToJson(bool addTypeOfExtendedProperties, Action<JObject> onPreCompleted)
-			=> this.ToJson(addTypeOfExtendedProperties, onPreCompleted, true);
 		#endregion
 
 	}

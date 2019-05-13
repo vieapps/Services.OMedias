@@ -24,6 +24,8 @@ namespace net.vieapps.Services.OMedias
 	{
 		public override string ServiceName => "OMedias";
 
+		public string FilesHttpURI => this.GetHttpURI("Files", "https://fs.vieapps.net");
+
 		public override void Start(string[] args = null, bool initializeRepository = true, Func<IService, Task> nextAsync = null)
 		{
 			// initialize caching storage
@@ -37,57 +39,58 @@ namespace net.vieapps.Services.OMedias
 		{
 			var stopwatch = Stopwatch.StartNew();
 			this.WriteLogs(requestInfo, $"Begin request ({requestInfo.Verb} {requestInfo.GetURI()})");
-			try
-			{
-				JToken json = null;
-				switch (requestInfo.ObjectName.ToLower())
+			using (var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, this.CancellationTokenSource.Token))
+				try
 				{
-					case "content":
-						json = await this.ProcessContentAsync(requestInfo, cancellationToken).ConfigureAwait(false);
-						break;
+					JToken json = null;
+					switch (requestInfo.ObjectName.ToLower())
+					{
+						case "content":
+							json = await this.ProcessContentAsync(requestInfo, cts.Token).ConfigureAwait(false);
+							break;
 
-					case "profile":
-						json = await this.ProcessProfileAsync(requestInfo, cancellationToken).ConfigureAwait(false);
-						break;
+						case "profile":
+							json = await this.ProcessProfileAsync(requestInfo, cts.Token).ConfigureAwait(false);
+							break;
 
-					case "definitions":
-						var objectIdentity = (requestInfo.GetObjectIdentity() ?? "").ToLower();
-						switch (objectIdentity)
-						{
-							case "categories":
-							case "groups":
-							case "lists":
-								json = JArray.Parse((await UtilityService.ReadTextFileAsync(Path.Combine(this.GetPath("StaticFiles"), this.ServiceName.ToLower(), $"{objectIdentity.ToLower()}.json"), null, cancellationToken).ConfigureAwait(false)).Replace("\r", "").Replace("\t", ""));
-								break;
+						case "definitions":
+							var objectIdentity = (requestInfo.GetObjectIdentity() ?? "").ToLower();
+							switch (objectIdentity)
+							{
+								case "categories":
+								case "groups":
+								case "lists":
+									json = JArray.Parse((await UtilityService.ReadTextFileAsync(Path.Combine(this.GetPath("StaticFiles"), this.ServiceName.ToLower(), $"{objectIdentity.ToLower()}.json"), null, cts.Token).ConfigureAwait(false)).Replace("\r", "").Replace("\t", ""));
+									break;
 
-							case "content":
-								if (!requestInfo.Query.TryGetValue("mode", out string mode) || "forms".IsEquals(mode))
-									json = this.GenerateFormControls<Content>();
-								else
+								case "content":
+									if (!requestInfo.Query.TryGetValue("mode", out string mode) || "forms".IsEquals(mode))
+										json = this.GenerateFormControls<Content>();
+									else
+										throw new InvalidRequestException($"The request is invalid [({requestInfo.Verb}): {requestInfo.GetURI()}]");
+									break;
+
+								default:
 									throw new InvalidRequestException($"The request is invalid [({requestInfo.Verb}): {requestInfo.GetURI()}]");
-								break;
+							}
+							break;
 
-							default:
-								throw new InvalidRequestException($"The request is invalid [({requestInfo.Verb}): {requestInfo.GetURI()}]");
-						}
-						break;
-
-					default:
-						throw new InvalidRequestException($"The request is invalid [({requestInfo.Verb}): {requestInfo.GetURI()}]");
+						default:
+							throw new InvalidRequestException($"The request is invalid [({requestInfo.Verb}): {requestInfo.GetURI()}]");
+					}
+					stopwatch.Stop();
+					this.WriteLogs(requestInfo, $"Success response - Execution times: {stopwatch.GetElapsedTimes()}");
+					if (this.IsDebugResultsEnabled)
+						this.WriteLogs(requestInfo,
+							$"- Request: {requestInfo.ToJson().ToString(this.IsDebugLogEnabled ? Formatting.Indented : Formatting.None)}" + "\r\n" +
+							$"- Response: {json?.ToString(this.IsDebugLogEnabled ? Formatting.Indented : Formatting.None)}"
+						);
+					return json;
 				}
-				stopwatch.Stop();
-				this.WriteLogs(requestInfo, $"Success response - Execution times: {stopwatch.GetElapsedTimes()}");
-				if (this.IsDebugResultsEnabled)
-					this.WriteLogs(requestInfo,
-						$"- Request: {requestInfo.ToJson().ToString(this.IsDebugLogEnabled ? Formatting.Indented : Formatting.None)}" + "\r\n" +
-						$"- Response: {json?.ToString(this.IsDebugLogEnabled ? Formatting.Indented : Formatting.None)}"
-					);
-				return json;
-			}
-			catch (Exception ex)
-			{
-				throw this.GetRuntimeException(requestInfo, ex, stopwatch);
-			}
+				catch (Exception ex)
+				{
+					throw this.GetRuntimeException(requestInfo, ex, stopwatch);
+				}
 		}
 
 		protected override List<Privilege> GetPrivileges(IUser user, Privileges privileges)
@@ -225,15 +228,22 @@ namespace net.vieapps.Services.OMedias
 					: await Content.SearchAsync(query, filterBy, pageSize, pageNumber, cancellationToken).ConfigureAwait(false)
 				: new List<Content>();
 
-			// build result
+			// build the result
 			pagination = new Tuple<long, int, int, int>(totalRecords, totalPages, pageSize, pageNumber);
-
+			var files = totalRecords > 0
+				? await this.GetFilesAsync(requestInfo, objects.Select(obj => obj.ID).ToString(",") + ",", objects.ToJObject("ID", obj => new JValue(obj.Title)).ToString(Formatting.None), cancellationToken).ConfigureAwait(false)
+				: new JObject();
 			var result = new JObject
 			{
 				{ "FilterBy", filter.ToClientJson(query) },
 				{ "SortBy", sortBy?.ToClientJson() },
 				{ "Pagination", pagination.GetPagination() },
-				{ "Objects", objects.ToJsonArray() }
+				{ "Objects", objects.ToJsonArray(ojson =>
+					{
+						ojson["MediaURI"] = ojson.Get<string>("MediaURI").Replace("~~", this.FilesHttpURI);
+						ojson.UpdateFiles(files[ojson.Get<string>("ID")]);
+					})
+				}
 			};
 
 			// update cache
@@ -263,17 +273,13 @@ namespace net.vieapps.Services.OMedias
 					{ "nowHourQuater", func_GetNowHourQuater }
 				});
 				var sortBy = Sorts<Content>.Descending("StartingTime").ThenByDescending("LastUpdated");
-				var contents = await Content.FindAsync(filterBy, sortBy, 20, 1, $"{this.GetCacheKey(filterBy, sortBy)}:1", this.CancellationTokenSource.Token).ConfigureAwait(false);
-				await this.SendUpdateMessagesAsync(
-					contents.Select(book => new BaseMessage
-					{
-						Type = $"{this.ServiceName}#Content#Update",
-						Data = book.ToJson()
-					}).ToList(),
-					"*",
-					null,
-					this.CancellationTokenSource.Token
-				).ConfigureAwait(false);
+				var objects = await Content.FindAsync(filterBy, sortBy, 20, 1, $"{this.GetCacheKey(filterBy, sortBy)}:1", this.CancellationTokenSource.Token).ConfigureAwait(false);
+				var messages = objects.Select(content => new BaseMessage
+				{
+					Type = $"{this.ServiceName}#Content#Update",
+					Data = content.ToJson()
+				}).ToList();
+				await this.SendUpdateMessagesAsync(messages, "*", null, this.CancellationTokenSource.Token).ConfigureAwait(false);
 			}
 			catch { }
 		}
@@ -305,6 +311,11 @@ namespace net.vieapps.Services.OMedias
 			content.ID = UtilityService.NewUUID;
 			content.Created = content.LastModified = content.LastUpdated = DateTime.Now;
 			content.CreatedID = content.LastModifiedID = requestInfo.Session.User.ID;
+			content.MediaURI = string.IsNullOrWhiteSpace(content.MediaURI)
+				? ""
+				: content.MediaURI.IsStartsWith(this.FilesHttpURI)
+					? content.MediaURI.Replace(this.FilesHttpURI, "~~")
+					: content.MediaURI;
 
 			var endingTime = body.Get<string>("EndingTime");
 			content.EndingTime = endingTime != null ? DateTime.Parse(endingTime).ToDTString() : "-";
@@ -314,16 +325,22 @@ namespace net.vieapps.Services.OMedias
 			// update database
 			await Content.CreateAsync(content, cancellationToken).ConfigureAwait(false);
 
+			// get files and generate JSON
+			var files = await this.GetFilesAsync(requestInfo, content.ID, content.Title, cancellationToken).ConfigureAwait(false);
+			var json = content.ToJson(files, ojson => ojson["MediaURI"] = content.MediaURI.Replace("~~", this.FilesHttpURI));
+
 			// send update message
-			await this.SendUpdateMessageAsync(new UpdateMessage
-			{
-				Type = $"{this.ServiceName}#Content#Update",
-				DeviceID = "*",
-				Data = content.ToJson()
-			}, cancellationToken).ConfigureAwait(false);
+			if (content.Status.Equals(ApprovalStatus.Published))
+				await this.SendUpdateMessageAsync(new UpdateMessage
+				{
+					Type = $"{this.ServiceName}#Content#Update",
+					DeviceID = "*",
+					ExcludedDeviceID = requestInfo.Session.DeviceID,
+					Data = json
+				}, cancellationToken).ConfigureAwait(false);
 
 			// return
-			return content.ToJson();
+			return json;
 		}
 		#endregion
 
@@ -333,13 +350,11 @@ namespace net.vieapps.Services.OMedias
 			// get the book
 			var objectIdentity = requestInfo.GetObjectIdentity();
 
-			var id = !string.IsNullOrWhiteSpace(objectIdentity) && objectIdentity.IsValidUUID()
+			var objectID = !string.IsNullOrWhiteSpace(objectIdentity) && objectIdentity.IsValidUUID()
 				? objectIdentity
-				: requestInfo.Query.ContainsKey("id")
-					? requestInfo.Query["id"]
-					: null;
+				: requestInfo.GetQueryParameter("x-object-id") ?? requestInfo.GetQueryParameter("object-id") ?? requestInfo.GetQueryParameter("content-id") ?? requestInfo.GetQueryParameter("id");
 
-			var content = await Content.GetAsync<Content>(id, cancellationToken).ConfigureAwait(false);
+			var content = await Content.GetAsync<Content>(objectID, cancellationToken).ConfigureAwait(false);
 			if (content == null)
 				throw new InformationNotFoundException();
 
@@ -347,7 +362,7 @@ namespace net.vieapps.Services.OMedias
 			if ("counters".IsEquals(objectIdentity))
 			{
 				// update counters
-				var result = await this.UpdateCounterAsync(content, requestInfo.Query.ContainsKey("action") ? requestInfo.Query["action"] : "View", cancellationToken).ConfigureAwait(false);
+				var result = await this.UpdateCounterAsync(content, requestInfo.GetParameter("x-action") ?? requestInfo.GetParameter("action") ?? "View", cancellationToken).ConfigureAwait(false);
 
 				// send update message
 				await this.SendUpdateMessageAsync(new UpdateMessage
@@ -364,7 +379,7 @@ namespace net.vieapps.Services.OMedias
 
 			// detail information
 			else
-				return content.ToJson();
+				return content.ToJson(await this.GetFilesAsync(requestInfo, content.ID, content.Title, cancellationToken).ConfigureAwait(false), json => json["MediaURI"] = content.MediaURI.Replace("~~", this.FilesHttpURI));
 		}
 
 		async Task<JObject> UpdateCounterAsync(Content content, string action, CancellationToken cancellationToken = default(CancellationToken))
@@ -429,6 +444,11 @@ namespace net.vieapps.Services.OMedias
 			content.CopyFrom(body, "ID,LastUpdated,LastModified,LastModifiedID,Created,CreatedID,EndingTime,Images,Counters".ToHashSet());
 			content.LastModified = content.LastUpdated = DateTime.Now;
 			content.LastModifiedID = requestInfo.Session.User.ID;
+			content.MediaURI = string.IsNullOrWhiteSpace(content.MediaURI)
+				? ""
+				: content.MediaURI.IsStartsWith(this.FilesHttpURI)
+					? content.MediaURI.Replace(this.FilesHttpURI, "~~")
+					: content.MediaURI;
 
 			var endingTime = body.Get<string>("EndingTime");
 			content.EndingTime = endingTime != null ? DateTime.Parse(endingTime).ToDTString() : "-";
@@ -436,16 +456,22 @@ namespace net.vieapps.Services.OMedias
 			// update database
 			await Content.UpdateAsync(content, requestInfo.Session.User.ID, cancellationToken).ConfigureAwait(false);
 
+			// get files and generate JSON
+			var files = await this.GetFilesAsync(requestInfo, content.ID, content.Title, cancellationToken).ConfigureAwait(false);
+			var json = content.ToJson(files, ojson => ojson["MediaURI"] = content.MediaURI.Replace("~~", this.FilesHttpURI));
+
 			// send update message
-			await this.SendUpdateMessageAsync(new UpdateMessage
-			{
-				Type = $"{this.ServiceName}#Content#Update",
-				DeviceID = "*",
-				Data = content.ToJson()
-			}, cancellationToken).ConfigureAwait(false);
+			if (content.Status.Equals(ApprovalStatus.Published))
+				await this.SendUpdateMessageAsync(new UpdateMessage
+				{
+					Type = $"{this.ServiceName}#Content#Update",
+					DeviceID = "*",
+					ExcludedDeviceID = requestInfo.Session.DeviceID,
+					Data = json
+				}, cancellationToken).ConfigureAwait(false);
 
 			// return
-			return content.ToJson();
+			return json;
 		}
 		#endregion
 
@@ -610,10 +636,10 @@ namespace net.vieapps.Services.OMedias
 				return;
 
 			// update counters
-			if (message.Type.IsEquals("Download") && !string.IsNullOrWhiteSpace(data.Get<string>("UserID")) && !string.IsNullOrWhiteSpace(data.Get<string>("ContentID")))
+			if (message.Type.IsEquals("File#Download") && !string.IsNullOrWhiteSpace(data.Get<string>("x-object-id")))
 				try
 				{
-					var content = await Content.GetAsync<Content>(data.Get<string>("ContentID"), cancellationToken).ConfigureAwait(false);
+					var content = await Content.GetAsync<Content>(data.Get<string>("x-object-id"), cancellationToken).ConfigureAwait(false);
 					if (content != null)
 					{
 						var result = await this.UpdateCounterAsync(content, Components.Security.Action.Download.ToString(), cancellationToken).ConfigureAwait(false);
