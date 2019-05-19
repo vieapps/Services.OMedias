@@ -93,11 +93,6 @@ namespace net.vieapps.Services.OMedias
 				}
 		}
 
-		protected override List<Privilege> GetPrivileges(IUser user, Privileges privileges)
-			=> "content,profile".ToList()
-				.Select(objName => new Privilege(this.ServiceName, objName, null, this.GetPrivilegeRole(user)))
-				.ToList();
-
 		Task<JObject> ProcessContentAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
 			switch (requestInfo.Verb)
@@ -137,13 +132,7 @@ namespace net.vieapps.Services.OMedias
 		async Task<JObject> SearchContentsAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
 			// check permissions
-			if (!await this.IsAuthorizedAsync(
-					requestInfo,
-					Components.Security.Action.View,
-					null,
-					(user, privileges) => this.GetPrivileges(user, privileges),
-					(role) => this.GetPrivilegeActions(role)
-				).ConfigureAwait(false))
+			if (!await this.IsAuthorizedAsync(requestInfo, "content", Components.Security.Action.View, cancellationToken).ConfigureAwait(false))
 				throw new AccessDeniedException();
 
 			// prepare
@@ -296,13 +285,7 @@ namespace net.vieapps.Services.OMedias
 			}
 
 			// check permission on create new
-			else if (!await this.IsAuthorizedAsync(
-				requestInfo,
-				Components.Security.Action.Update,
-				null,
-				(user, privileges) => this.GetPrivileges(user, privileges),
-				(role) => this.GetPrivilegeActions(role)
-			).ConfigureAwait(false))
+			else if (!await this.IsAuthorizedAsync(requestInfo, "content", Components.Security.Action.Update, cancellationToken).ConfigureAwait(false))
 				throw new AccessDeniedException();
 
 			// update information
@@ -425,13 +408,7 @@ namespace net.vieapps.Services.OMedias
 		async Task<JObject> UpdateContentAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
 			// check permissions
-			if (!await this.IsAuthorizedAsync(
-				requestInfo,
-				Components.Security.Action.Update,
-				null,
-				(user, privileges) => this.GetPrivileges(user, privileges),
-				(role) => this.GetPrivilegeActions(role)
-			).ConfigureAwait(false))
+			if (!await this.IsAuthorizedAsync(requestInfo, "content", Components.Security.Action.Update, cancellationToken).ConfigureAwait(false))
 				throw new AccessDeniedException();
 
 			// prepare
@@ -479,13 +456,7 @@ namespace net.vieapps.Services.OMedias
 		async Task<JObject> DeleteContentAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
 			// check permissions
-			if (!await this.IsAuthorizedAsync(
-				requestInfo,
-				Components.Security.Action.Delete,
-				null,
-				(user, privileges) => this.GetPrivileges(user, privileges),
-				(role) => this.GetPrivilegeActions(role)
-			).ConfigureAwait(false))
+			if (!await this.IsAuthorizedAsync(requestInfo, "content",  Components.Security.Action.Delete, cancellationToken).ConfigureAwait(false))
 				throw new AccessDeniedException();
 
 			// prepare
@@ -573,9 +544,7 @@ namespace net.vieapps.Services.OMedias
 			var id = requestInfo.GetObjectIdentity() ?? requestInfo.Session.User.ID;
 			var gotRights = this.IsAuthenticated(requestInfo) && requestInfo.Session.User.ID.IsEquals(id);
 			if (!gotRights)
-				gotRights = await this.IsSystemAdministratorAsync(requestInfo).ConfigureAwait(false);
-			if (!gotRights)
-				gotRights = await this.IsAuthorizedAsync(requestInfo, Components.Security.Action.View, null, this.GetPrivileges, this.GetPrivilegeActions).ConfigureAwait(false);
+				gotRights = await this.IsServiceAdministratorAsync(requestInfo, cancellationToken).ConfigureAwait(false);
 			if (!gotRights)
 				throw new AccessDeniedException();
 
@@ -611,7 +580,7 @@ namespace net.vieapps.Services.OMedias
 			if (!gotRights)
 				gotRights = await this.IsSystemAdministratorAsync(requestInfo).ConfigureAwait(false);
 			if (!gotRights)
-				gotRights = await this.IsAuthorizedAsync(requestInfo, Components.Security.Action.Update, null, this.GetPrivileges, this.GetPrivilegeActions).ConfigureAwait(false);
+				gotRights = await this.IsAuthorizedAsync(requestInfo, "profile", Components.Security.Action.Update, cancellationToken).ConfigureAwait(false);
 			if (!gotRights)
 				throw new AccessDeniedException();
 
