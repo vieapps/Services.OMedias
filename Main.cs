@@ -26,16 +26,16 @@ namespace net.vieapps.Services.OMedias
 
 		public string FilesHttpURI => this.GetHttpURI("Files", "https://fs.vieapps.net");
 
-		public override void Start(string[] args = null, bool initializeRepository = true, Func<IService, Task> nextAsync = null)
+		public override void Start(string[] args = null, bool initializeRepository = true, Action<IService> next = null)
 		{
 			// initialize caching storage
 			Utility.Cache = new Components.Caching.Cache($"VIEApps-Services-{this.ServiceName}", Components.Utility.Logger.GetLoggerFactory());
 
 			// start the service
-			base.Start(args, initializeRepository, nextAsync);
+			base.Start(args, initializeRepository, next);
 		}
 
-		public override async Task<JToken> ProcessRequestAsync(RequestInfo requestInfo, CancellationToken cancellationToken = default(CancellationToken))
+		public override async Task<JToken> ProcessRequestAsync(RequestInfo requestInfo, CancellationToken cancellationToken = default)
 		{
 			var stopwatch = Stopwatch.StartNew();
 			this.WriteLogs(requestInfo, $"Begin request ({requestInfo.Verb} {requestInfo.GetURI()})");
@@ -365,7 +365,7 @@ namespace net.vieapps.Services.OMedias
 				return content.ToJson(await this.GetFilesAsync(requestInfo, content.ID, content.Title, cancellationToken).ConfigureAwait(false), json => json["MediaURI"] = content.MediaURI.Replace("~~", this.FilesHttpURI));
 		}
 
-		async Task<JObject> UpdateCounterAsync(Content content, string action, CancellationToken cancellationToken = default(CancellationToken))
+		async Task<JObject> UpdateCounterAsync(Content content, string action, CancellationToken cancellationToken = default)
 		{
 			// get and update
 			var counter = content.Counters.FirstOrDefault(c => c.Type.IsEquals(action));
@@ -597,7 +597,7 @@ namespace net.vieapps.Services.OMedias
 		#endregion
 
 		#region Process inter-communicate messages
-		protected override async Task ProcessInterCommunicateMessageAsync(CommunicateMessage message, CancellationToken cancellationToken = default(CancellationToken))
+		protected override async Task ProcessInterCommunicateMessageAsync(CommunicateMessage message, CancellationToken cancellationToken = default)
 		{
 			// prepare
 			var data = message.Data?.ToExpandoObject();
